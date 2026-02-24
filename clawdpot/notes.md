@@ -41,3 +41,6 @@
 20260223T125726Z: qwen3-coder consistency api_server #2 — 11/20 in 394s. Variance: missed 3 more tests than run 1.
 20260223T130436Z: qwen3-coder consistency api_server #3 — 14/20 in 65s. Back to baseline.
 20260223T130436Z: CONSISTENCY SUMMARY: calculator 15/15 reliable (1 flake = tool-call miss, not code quality). debug_hunt 10/10 rock solid. api_server 11-14/20 with variance. Wall clock varies 2-3x across runs (Ollama nondeterminism).
+20260224T171352Z: First clawdpot run post-extraction — 0/0 because pytest missing from venv. Added pytest to base deps.
+20260224T172118Z: calculator 15/15 in 159s. Clean run after pytest fix. Extraction verified working.
+20260224T172707Z: debug_hunt 10/10 in 242s. All 5 bugs fixed. Clawdpot fully operational as standalone repo.
