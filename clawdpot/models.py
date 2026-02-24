@@ -20,6 +20,7 @@ class Mode(str, Enum):
     HYBRID = "hybrid"
     OFFLINE = "offline"
     OFFLINE_CPU = "offline-cpu"
+    GSD = "gsd"
 
 
 ALL_MODES = [Mode.NATIVE, Mode.HYBRID, Mode.OFFLINE, Mode.OFFLINE_CPU]

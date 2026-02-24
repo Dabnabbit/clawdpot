@@ -1,0 +1,5 @@
+{
+  "model_profile": "balanced",
+  "max_concurrent_agents": 3,
+  "commit_docs": true
+}

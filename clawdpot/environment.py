@@ -49,6 +49,61 @@ def build_native_env() -> dict[str, str]:
     return _strip_nesting_guards(env)
 
 
+def build_gsd_env(
+    orchestrator_model: Optional[str] = None,
+    subagent_model: Optional[str] = None,
+    num_ctx: int = 65536,
+) -> dict[str, str]:
+    """Build env for GSD mode — mixed cloud/local model routing.
+
+    Sets different models per Claude Code tier to test mixed orchestration:
+    - Opus tier (orchestrator) → one model
+    - Sonnet tier (GSD executors) → another model
+    - Haiku tier (verifiers, lightweight agents) → subagent model
+    - CLAUDE_CODE_SUBAGENT_MODEL → subagent model
+
+    All traffic goes through local Ollama. For cloud orchestration with
+    local subagents, the caller should override ANTHROPIC_BASE_URL after.
+
+    Args:
+        orchestrator_model: Model for opus/sonnet tiers (orchestrator + executors).
+        subagent_model: Model for haiku tier + CLAUDE_CODE_SUBAGENT_MODEL.
+        num_ctx: Context window size for Ollama.
+    """
+    orch = orchestrator_model or os.environ.get("HC_MODEL", "qwen3-coder")
+    sub = subagent_model or os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+    env = os.environ.copy()
+    env.update({
+        # Route all API calls to local Ollama
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:11434",
+        "ANTHROPIC_AUTH_TOKEN": "ollama",
+        "ANTHROPIC_API_KEY": "",
+
+        # Mixed tier routing: orchestrator vs subagent models
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": orch,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": orch,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": sub,
+        "CLAUDE_CODE_SUBAGENT_MODEL": sub,
+
+        # Stability
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "DISABLE_AUTOUPDATER": "1",
+
+        # Prevent Ollama cloud traffic
+        "OLLAMA_NO_CLOUD": "1",
+        "OLLAMA_REMOTES": "",
+
+        # Bogus proxy catches any library that bypasses ANTHROPIC_BASE_URL
+        "HTTPS_PROXY": "http://127.0.0.1:1",
+        "HTTP_PROXY": "http://127.0.0.1:1",
+        "NO_PROXY": "localhost,127.0.0.1,::1",
+
+        # Context window
+        "OLLAMA_CONTEXT_LENGTH": str(num_ctx),
+    })
+    return _strip_nesting_guards(env)
+
+
 def build_offline_cpu_env(
     model: Optional[str] = None,
     num_ctx: int = 32768,

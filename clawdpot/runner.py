@@ -28,7 +28,7 @@ from typing import Optional
 
 from rich.console import Console
 
-from clawdpot.environment import build_native_env, build_offline_cpu_env, build_offline_env
+from clawdpot.environment import build_gsd_env, build_native_env, build_offline_cpu_env, build_offline_env
 from clawdpot.models import Mode, RunResult, StatsSnapshot, TestResult
 from clawdpot.pricing import classify_model, estimate_cost
 from clawdpot.scenarios import load_scenario
@@ -140,6 +140,24 @@ def _copy_seed(seed_dir: Optional[Path], workdir: Path) -> None:
         shutil.copytree(seed_dir, workdir, dirs_exist_ok=True)
 
 
+def _init_git_workdir(workdir: Path) -> None:
+    """Initialize a git repo in the workdir so GSD can make atomic commits."""
+    subprocess.run(
+        ["git", "init", "--initial-branch=main"],
+        cwd=workdir, capture_output=True, timeout=10,
+    )
+    subprocess.run(
+        ["git", "add", "-A"],
+        cwd=workdir, capture_output=True, timeout=10,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", "seed", "--allow-empty"],
+        cwd=workdir, capture_output=True, timeout=10,
+        env={**os.environ, "GIT_AUTHOR_NAME": "clawdpot", "GIT_AUTHOR_EMAIL": "test@test",
+             "GIT_COMMITTER_NAME": "clawdpot", "GIT_COMMITTER_EMAIL": "test@test"},
+    )
+
+
 def _run_claude(
     spec_text: str,
     workdir: Path,
@@ -160,6 +178,18 @@ def _run_claude(
         "--no-session-persistence",
         "--setting-sources", "user",
     ]
+
+    # GSD mode: needs full settings (slash commands) and git repo
+    if mode == Mode.GSD:
+        # Override setting-sources to include user settings (GSD slash commands)
+        # Remove the --setting-sources we just added and use default (all sources)
+        cmd = [
+            "claude",
+            "-p", spec_text,
+            "--dangerously-skip-permissions",
+            "--no-session-persistence",
+        ]
+        _init_git_workdir(workdir)
 
     # Safety cap on native mode to limit cloud spend
     if mode == Mode.NATIVE:
@@ -308,6 +338,13 @@ def run_scenario(
         mode_slug = f"offline-{_model_slug(model)}"
     elif model and mode == Mode.OFFLINE_CPU:
         mode_slug = f"offline-cpu-{_model_slug(model)}"
+    elif mode == Mode.GSD:
+        parts = ["gsd"]
+        if model:
+            parts.append(_model_slug(model))
+        if background_model:
+            parts.append(_model_slug(background_model))
+        mode_slug = "-".join(parts)
 
     console.print(f"\n[bold]Running:[/bold] {scenario.name} / {mode_slug}")
     console.print(f"  Timeout: {scenario.timeout_s}s")
@@ -344,13 +381,29 @@ def run_scenario(
     elif mode == Mode.OFFLINE_CPU:
         env = build_offline_cpu_env(model=model, num_ctx=num_ctx)
         console.print(f"  Mode: [magenta]offline-cpu[/magenta] (CPU-only Ollama)")
+    elif mode == Mode.GSD:
+        env = build_gsd_env(
+            orchestrator_model=model,
+            subagent_model=background_model,
+            num_ctx=num_ctx,
+        )
+        orch_name = model or os.environ.get("HC_MODEL", "qwen3-coder")
+        sub_name = background_model or os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+        console.print(f"  Mode: [blue]gsd[/blue] (orchestrator={orch_name}, subagent={sub_name})")
     else:
         env = build_native_env()
 
-    # 4b. Warm up Ollama for offline modes — ensures model is loaded before
+    # 4b. Warm up Ollama for offline/GSD modes — ensures model is loaded before
     # the clock starts so offline doesn't pay a cold-load penalty
     if mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
         _warm_ollama(ollama_model, console)
+    elif mode == Mode.GSD:
+        # Warm both orchestrator and subagent models
+        orch_name = model or os.environ.get("HC_MODEL", "qwen3-coder")
+        sub_name = background_model or os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+        _warm_ollama(orch_name, console)
+        if sub_name != orch_name:
+            _warm_ollama(sub_name, console)
 
     # 5. Read the spec
     spec_text = scenario.spec_path.read_text(encoding="utf-8")
@@ -389,7 +442,9 @@ def run_scenario(
         scenario=scenario.name,
         mode=mode_slug,
         timestamp=timestamp,
-        model_name=ollama_model if mode in (Mode.OFFLINE, Mode.OFFLINE_CPU) else "",
+        model_name=ollama_model if mode in (Mode.OFFLINE, Mode.OFFLINE_CPU) else (
+            f"{model or 'qwen3-coder'}+{background_model or 'qwen3:4b'}" if mode == Mode.GSD else ""
+        ),
         wall_clock_s=round(wall_clock, 1),
         exit_code=exit_code,
         stdout_path=str(result_dir / "stdout.txt"),

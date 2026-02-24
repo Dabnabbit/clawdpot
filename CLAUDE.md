@@ -48,6 +48,10 @@ clawdpot/
 - **offline-cpu** — Local Ollama on CPU only (CUDA_VISIBLE_DEVICES=""), opt-in via `--mode offline-cpu`
   - GPU preflight runs by default to catch broken models before slow CPU test
   - `--skip-preflight` to bypass when model is known-good
+- **gsd** — Mixed model routing through GSD orchestration (`/gsd:quick`)
+  - `--model` sets orchestrator (opus/sonnet tiers), `--background-model` sets subagent (haiku tier)
+  - Workdir seeded with `.planning/` scaffold and git repo for GSD atomic commits
+  - Use with `gsd_calculator` scenario (or any scenario with `.planning/` seed)
 
 ## Key Design Decisions
 

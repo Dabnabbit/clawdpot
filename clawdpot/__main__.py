@@ -56,9 +56,10 @@ def cmd_list() -> None:
 @app.command("run")
 def cmd_run(
     scenario: str = typer.Argument(help="Scenario name (e.g., 'calculator')"),
-    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Mode: native, hybrid, offline, offline-cpu"),
+    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Mode: native, hybrid, offline, offline-cpu, gsd"),
     all_modes: bool = typer.Option(False, "--all", "-a", help="Run all three classic modes"),
-    model: Optional[str] = typer.Option(None, "--model", help="Override Ollama model for offline"),
+    model: Optional[str] = typer.Option(None, "--model", help="Override primary/orchestrator model"),
+    background_model: Optional[str] = typer.Option(None, "--background-model", help="Subagent model for GSD mode"),
     num_ctx: int = typer.Option(65536, "--num-ctx", help="Context window for offline mode"),
     skip_preflight: bool = typer.Option(False, "--skip-preflight", help="Skip GPU preflight check for offline-cpu mode"),
 ) -> None:
@@ -73,9 +74,13 @@ def cmd_run(
         try:
             m = Mode(mode)
         except ValueError:
-            console.print(f"[red]Invalid mode: {mode}[/red]. Choose: native, hybrid, offline, offline-cpu")
+            console.print(f"[red]Invalid mode: {mode}[/red]. Choose: native, hybrid, offline, offline-cpu, gsd")
             raise typer.Exit(1)
-        run_scenario(scenario, m, console, model=model, num_ctx=num_ctx, skip_preflight=skip_preflight)
+        run_scenario(
+            scenario, m, console,
+            model=model, background_model=background_model,
+            num_ctx=num_ctx, skip_preflight=skip_preflight,
+        )
     else:
         console.print("[red]Specify --mode or --all[/red]")
         raise typer.Exit(1)
