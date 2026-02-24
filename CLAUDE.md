@@ -40,10 +40,20 @@ clawdpot/
 - Comments explain *why*, not *what*
 - Test changes by running scenario judges manually or via `clawdpot run`
 
+## Modes
+
+- **native** — Vanilla Anthropic cloud API (control baseline)
+- **hybrid** — Direct Anthropic cloud (equivalent to native post-proxy-removal)
+- **offline** — Local Ollama on GPU
+- **offline-cpu** — Local Ollama on CPU only (CUDA_VISIBLE_DEVICES=""), opt-in via `--mode offline-cpu`
+  - GPU preflight runs by default to catch broken models before slow CPU test
+  - `--skip-preflight` to bypass when model is known-good
+
 ## Key Design Decisions
 
 - **Workdirs in /tmp/** — Prevents claude -p from discovering parent project context
 - **Ollama warm-up** — Pre-loads model in VRAM before timing starts
+- **GPU preflight for CPU mode** — Quick GPU tool-call check before committing to slow CPU run
 - **Randomized mode order** — Prevents systematic bias in multi-mode runs
 - **Stats-cache.json diffing** — Token usage computed from before/after snapshots
 - **No shared deps** — pricing.py is self-contained (duplicated from hermit_claude)

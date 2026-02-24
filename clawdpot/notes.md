@@ -44,3 +44,8 @@
 20260224T171352Z: First clawdpot run post-extraction — 0/0 because pytest missing from venv. Added pytest to base deps.
 20260224T172118Z: calculator 15/15 in 159s. Clean run after pytest fix. Extraction verified working.
 20260224T172707Z: debug_hunt 10/10 in 242s. All 5 bugs fixed. Clawdpot fully operational as standalone repo.
+20260224T191243Z: CPU test: qwen3:4b calculator — 4/15 in 106.1s. Tool use works but code quality too low.
+20260224T192324Z: CPU test: qwen3:4b calculator #2 — 1/15 in 106.2s. Consistent timing, high correctness variance. Model too small.
+20260224T193236Z: CPU test: gpt-oss:20b calculator — 14/15 in 29.4s. MoE architecture = fastest CPU model. Near-perfect correctness.
+20260224T193628Z: CPU test: qwen3-coder calculator — 15/15 in 87.3s. Perfect score on CPU. Slower than gpt-oss:20b but flawless.
+20260224T193628Z: CPU SUMMARY: gpt-oss:20b is best CPU model (speed), qwen3-coder is best CPU model (correctness). qwen3:4b eliminated for CPU — tool use works but quality unusable. MoE (3.6B active params) beats dense 4B on both speed and quality.
