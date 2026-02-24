@@ -56,7 +56,7 @@ def cmd_list() -> None:
 @app.command("run")
 def cmd_run(
     scenario: str = typer.Argument(help="Scenario name (e.g., 'calculator')"),
-    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Mode: native, hybrid, offline"),
+    mode: Optional[str] = typer.Option(None, "--mode", "-m", help="Mode: native, hybrid, offline, offline-cpu"),
     all_modes: bool = typer.Option(False, "--all", "-a", help="Run all three classic modes"),
     model: Optional[str] = typer.Option(None, "--model", help="Override Ollama model for offline"),
     num_ctx: int = typer.Option(65536, "--num-ctx", help="Context window for offline mode"),
@@ -72,7 +72,7 @@ def cmd_run(
         try:
             m = Mode(mode)
         except ValueError:
-            console.print(f"[red]Invalid mode: {mode}[/red]. Choose: native, hybrid, offline")
+            console.print(f"[red]Invalid mode: {mode}[/red]. Choose: native, hybrid, offline, offline-cpu")
             raise typer.Exit(1)
         run_scenario(scenario, m, console, model=model, num_ctx=num_ctx)
     else:

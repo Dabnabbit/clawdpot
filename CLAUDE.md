@@ -17,7 +17,7 @@ clawdpot/
 ├── runner.py          # Orchestrates: setup → claude -p → judge → metrics
 ├── models.py          # Mode, RunResult, StatsSnapshot, TestResult, ScoreCard
 ├── scorer.py          # Rich comparison tables, markdown report generation
-├── environment.py     # Per-mode env dict builders (native, offline)
+├── environment.py     # Per-mode env dict builders (native, offline, offline-cpu)
 ├── pricing.py         # Model classification and Anthropic cost estimation
 ├── notes.md           # Historical run annotations
 └── scenarios/

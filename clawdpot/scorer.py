@@ -17,7 +17,7 @@ from rich.table import Table
 from clawdpot.models import ALL_MODES, Mode, RunResult, ScoreCard
 
 # Canonical display order — known modes first, then any extras alphabetically.
-_MODE_DISPLAY_ORDER = ["native", "hybrid", "offline"]
+_MODE_DISPLAY_ORDER = ["native", "hybrid", "offline", "offline-cpu"]
 
 
 def _results_root() -> Path:
@@ -110,6 +110,7 @@ def render_scorecard(card: ScoreCard, console: Console) -> None:
         "native": "green",
         "hybrid": "cyan",
         "offline": "yellow",
+        "offline-cpu": "magenta",
     }
 
     for mode_slug in active_modes:

@@ -28,7 +28,7 @@ from typing import Optional
 
 from rich.console import Console
 
-from clawdpot.environment import build_native_env, build_offline_env
+from clawdpot.environment import build_native_env, build_offline_cpu_env, build_offline_env
 from clawdpot.models import Mode, RunResult, StatsSnapshot, TestResult
 from clawdpot.pricing import classify_model, estimate_cost
 from clawdpot.scenarios import load_scenario
@@ -249,10 +249,12 @@ def run_scenario(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     # Derive the mode slug for result storage — when --model is set and mode
-    # is offline, include the model name so different models get separate dirs.
+    # is offline/offline-cpu, include the model name so different models get separate dirs.
     mode_slug = mode.value
     if model and mode == Mode.OFFLINE:
         mode_slug = f"offline-{_model_slug(model)}"
+    elif model and mode == Mode.OFFLINE_CPU:
+        mode_slug = f"offline-cpu-{_model_slug(model)}"
 
     console.print(f"\n[bold]Running:[/bold] {scenario.name} / {mode_slug}")
     console.print(f"  Timeout: {scenario.timeout_s}s")
@@ -267,8 +269,11 @@ def run_scenario(
     # 3. Snapshot stats-cache (before)
     stats_before = StatsSnapshot.capture()
 
-    # 4. Build mode-specific env
-    ollama_model = model or os.environ.get("HC_MODEL", "gpt-oss:20b")
+    # 4. Build mode-specific env — CPU default differs (qwen3:4b, not gpt-oss:20b)
+    if mode == Mode.OFFLINE_CPU:
+        ollama_model = model or os.environ.get("HC_MODEL", "qwen3:4b")
+    else:
+        ollama_model = model or os.environ.get("HC_MODEL", "gpt-oss:20b")
 
     if mode == Mode.NATIVE:
         env = build_native_env()
@@ -283,12 +288,15 @@ def run_scenario(
     elif mode == Mode.OFFLINE:
         env = build_offline_env(model=model, num_ctx=num_ctx)
         console.print(f"  Mode: [yellow]offline[/yellow] (local Ollama only)")
+    elif mode == Mode.OFFLINE_CPU:
+        env = build_offline_cpu_env(model=model, num_ctx=num_ctx)
+        console.print(f"  Mode: [magenta]offline-cpu[/magenta] (CPU-only Ollama)")
     else:
         env = build_native_env()
 
-    # 4b. Warm up Ollama for offline mode — ensures model is loaded in VRAM
-    # before the clock starts so offline doesn't pay a cold-load penalty
-    if mode == Mode.OFFLINE:
+    # 4b. Warm up Ollama for offline modes — ensures model is loaded before
+    # the clock starts so offline doesn't pay a cold-load penalty
+    if mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
         _warm_ollama(ollama_model, console)
 
     # 5. Read the spec
@@ -328,7 +336,7 @@ def run_scenario(
         scenario=scenario.name,
         mode=mode_slug,
         timestamp=timestamp,
-        model_name=ollama_model if mode == Mode.OFFLINE else "",
+        model_name=ollama_model if mode in (Mode.OFFLINE, Mode.OFFLINE_CPU) else "",
         wall_clock_s=round(wall_clock, 1),
         exit_code=exit_code,
         stdout_path=str(result_dir / "stdout.txt"),
@@ -360,6 +368,7 @@ def run_all_modes(
 
     Returns list of RunResults in execution order (randomized).
     """
+    # CPU mode excluded — too slow for batch runs, use --mode offline-cpu explicitly
     modes = [Mode.NATIVE, Mode.HYBRID, Mode.OFFLINE]
     random.shuffle(modes)
     console.print(f"\n[bold]Mode order (randomized):[/bold] {', '.join(m.value for m in modes)}")

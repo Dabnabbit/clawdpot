@@ -19,9 +19,10 @@ class Mode(str, Enum):
     NATIVE = "native"
     HYBRID = "hybrid"
     OFFLINE = "offline"
+    OFFLINE_CPU = "offline-cpu"
 
 
-ALL_MODES = [Mode.NATIVE, Mode.HYBRID, Mode.OFFLINE]
+ALL_MODES = [Mode.NATIVE, Mode.HYBRID, Mode.OFFLINE, Mode.OFFLINE_CPU]
 
 
 @dataclass

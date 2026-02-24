@@ -49,6 +49,25 @@ def build_native_env() -> dict[str, str]:
     return _strip_nesting_guards(env)
 
 
+def build_offline_cpu_env(
+    model: Optional[str] = None,
+    num_ctx: int = 32768,
+) -> dict[str, str]:
+    """Build env for offline-cpu mode — CPU-only inference, no GPU.
+
+    Same as offline-gpu but forces CUDA_VISIBLE_DEVICES="" to disable GPU
+    and uses a lower default context window to reduce RAM pressure.
+
+    Args:
+        model: Ollama model tag. Defaults to HC_MODEL or 'qwen3:4b'.
+        num_ctx: Context window size for Ollama (default 32768 for CPU).
+    """
+    env = build_offline_env(model=model or "qwen3:4b", num_ctx=num_ctx)
+    # Force CPU-only inference even on a machine with a GPU
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    return env
+
+
 def build_offline_env(
     model: Optional[str] = None,
     num_ctx: int = 65536,
