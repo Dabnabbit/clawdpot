@@ -60,6 +60,7 @@ def cmd_run(
     all_modes: bool = typer.Option(False, "--all", "-a", help="Run all three classic modes"),
     model: Optional[str] = typer.Option(None, "--model", help="Override Ollama model for offline"),
     num_ctx: int = typer.Option(65536, "--num-ctx", help="Context window for offline mode"),
+    skip_preflight: bool = typer.Option(False, "--skip-preflight", help="Skip GPU preflight check for offline-cpu mode"),
 ) -> None:
     """Run a scenario against one or all modes."""
     if all_modes:
@@ -74,7 +75,7 @@ def cmd_run(
         except ValueError:
             console.print(f"[red]Invalid mode: {mode}[/red]. Choose: native, hybrid, offline, offline-cpu")
             raise typer.Exit(1)
-        run_scenario(scenario, m, console, model=model, num_ctx=num_ctx)
+        run_scenario(scenario, m, console, model=model, num_ctx=num_ctx, skip_preflight=skip_preflight)
     else:
         console.print("[red]Specify --mode or --all[/red]")
         raise typer.Exit(1)

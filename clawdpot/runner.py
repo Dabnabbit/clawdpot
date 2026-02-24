@@ -68,6 +68,48 @@ def _warm_ollama(model: str, console: Console) -> None:
         console.print(f"  [yellow]Ollama warm-up failed: {e}[/yellow]")
 
 
+def _run_gpu_preflight(model: str, num_ctx: int, console: Console) -> bool:
+    """Quick GPU run to verify a model can handle tool calls before slow CPU test.
+
+    Runs a minimal claude -p task on GPU that requires a file write (tool use).
+    Returns True if the model successfully created the expected file.
+    """
+    console.print("\n  [bold]GPU preflight check...[/bold]")
+    _warm_ollama(model, console)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    workdir = Path(f"/tmp/clawdpot-preflight-{_model_slug(model)}-{timestamp}")
+    workdir.mkdir(parents=True, exist_ok=True)
+
+    env = build_offline_env(model=model, num_ctx=num_ctx)
+    cmd = [
+        "claude",
+        "-p", "Create a file called preflight.txt containing the text 'ok'",
+        "--dangerously-skip-permissions",
+        "--no-session-persistence",
+        "--setting-sources", "user",
+    ]
+
+    try:
+        proc = subprocess.run(
+            cmd, cwd=workdir, env=env,
+            capture_output=True, text=True, timeout=90,
+        )
+        passed = proc.returncode == 0 and (workdir / "preflight.txt").exists()
+    except subprocess.TimeoutExpired:
+        passed = False
+
+    # Clean up
+    shutil.rmtree(workdir, ignore_errors=True)
+
+    if passed:
+        console.print("  [green]GPU preflight: pass[/green] — model handles tool calls")
+    else:
+        console.print("  [red]GPU preflight: fail[/red] — model cannot complete tool calls on GPU")
+        console.print("  [red]Aborting CPU test — fix GPU issues first[/red]")
+    return passed
+
+
 def _results_root() -> Path:
     """Absolute path to clawdpot/results/."""
     return Path(__file__).parent / "results"
@@ -224,6 +266,7 @@ def run_scenario(
     model: Optional[str] = None,
     background_model: Optional[str] = None,
     num_ctx: int = 65536,
+    skip_preflight: bool = False,
 ) -> RunResult:
     """Execute a single run for one scenario and one mode.
 
@@ -232,11 +275,12 @@ def run_scenario(
 
     Args:
         scenario_name: Name of the scenario (e.g., 'calculator').
-        mode: Competition mode (native, hybrid, offline).
+        mode: Competition mode (native, hybrid, offline, offline-cpu).
         console: Rich Console for status output.
         model: Ollama model override for offline mode.
         background_model: Reserved for future dual-model routing.
         num_ctx: Context window size for offline mode.
+        skip_preflight: Skip GPU preflight check for offline-cpu mode.
 
     Returns:
         RunResult with all metrics populated.
@@ -245,6 +289,15 @@ def run_scenario(
     if not scenario:
         console.print(f"[red]Error:[/red] Unknown scenario: {scenario_name}")
         return RunResult(scenario=scenario_name, mode=mode.value, timestamp="")
+
+    # GPU preflight for CPU mode — catch broken models fast before slow CPU run
+    if mode == Mode.OFFLINE_CPU and not skip_preflight:
+        preflight_model = model or os.environ.get("HC_MODEL", "qwen3:4b")
+        if not _run_gpu_preflight(preflight_model, num_ctx, console):
+            return RunResult(
+                scenario=scenario_name, mode=mode.value, timestamp="",
+                exit_code=-2,
+            )
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
