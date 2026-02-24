@@ -179,15 +179,14 @@ def _run_claude(
         "--setting-sources", "user",
     ]
 
-    # GSD mode: needs full settings (slash commands) and git repo
+    # GSD mode: needs full settings (slash commands), git repo, and verbose output
     if mode == Mode.GSD:
-        # Override setting-sources to include user settings (GSD slash commands)
-        # Remove the --setting-sources we just added and use default (all sources)
         cmd = [
             "claude",
             "-p", spec_text,
             "--dangerously-skip-permissions",
             "--no-session-persistence",
+            "--verbose",
         ]
         _init_git_workdir(workdir)
 
@@ -196,20 +195,60 @@ def _run_claude(
         cmd.extend(["--max-budget-usd", "2.0"])
 
     start = time.monotonic()
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=workdir,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-        elapsed = time.monotonic() - start
-        return proc.returncode, elapsed, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired:
-        elapsed = time.monotonic() - start
-        return -1, elapsed, "", f"TIMEOUT after {timeout_s}s"
+
+    # GSD mode: stream stderr to console in real-time for visibility
+    if mode == Mode.GSD:
+        stderr_log = result_dir / "stderr.txt"
+        try:
+            with open(stderr_log, "w", encoding="utf-8") as stderr_file:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=workdir,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                stdout_chunks = []
+                stderr_chunks = []
+                import selectors
+                sel = selectors.DefaultSelector()
+                sel.register(proc.stdout, selectors.EVENT_READ)
+                sel.register(proc.stderr, selectors.EVENT_READ)
+                while sel.get_map():
+                    for key, _ in sel.select(timeout=1):
+                        line = key.fileobj.readline()
+                        if not line:
+                            sel.unregister(key.fileobj)
+                            continue
+                        if key.fileobj is proc.stderr:
+                            sys.stderr.write(f"  [gsd] {line}")
+                            stderr_file.write(line)
+                            stderr_chunks.append(line)
+                        else:
+                            stdout_chunks.append(line)
+                proc.wait(timeout=timeout_s)
+                elapsed = time.monotonic() - start
+                return proc.returncode, elapsed, "".join(stdout_chunks), "".join(stderr_chunks)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            elapsed = time.monotonic() - start
+            return -1, elapsed, "", f"TIMEOUT after {timeout_s}s"
+    else:
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=workdir,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+            elapsed = time.monotonic() - start
+            return proc.returncode, elapsed, proc.stdout, proc.stderr
+        except subprocess.TimeoutExpired:
+            elapsed = time.monotonic() - start
+            return -1, elapsed, "", f"TIMEOUT after {timeout_s}s"
 
 
 def _run_judge(workdir: Path, tests_dir: Path, result_dir: Path) -> TestResult:
