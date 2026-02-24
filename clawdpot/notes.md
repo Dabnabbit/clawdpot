@@ -49,3 +49,4 @@
 20260224T193236Z: CPU test: gpt-oss:20b calculator — 14/15 in 29.4s. MoE architecture = fastest CPU model. Near-perfect correctness.
 20260224T193628Z: CPU test: qwen3-coder calculator — 15/15 in 87.3s. Perfect score on CPU. Slower than gpt-oss:20b but flawless.
 20260224T193628Z: CPU SUMMARY: gpt-oss:20b is best CPU model (speed), qwen3-coder is best CPU model (correctness). qwen3:4b eliminated for CPU — tool use works but quality unusable. MoE (3.6B active params) beats dense 4B on both speed and quality.
+20260224T211231Z: GSD mode first run: gsd_calculator with qwen3-coder (both tiers) — 15/15 in 351s. /gsd:quick works via claude -p. Planner→executor subagent chain completes through Ollama. ~2x overhead vs raw claude -p (351s vs 159s).
