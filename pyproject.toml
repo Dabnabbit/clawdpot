@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "clawdpot"
+version = "0.1.0"
+description = "Model competition system for Claude Code — throw models in, see which one comes out on top"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=14.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+clawdpot = "clawdpot.__main__:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["clawdpot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
