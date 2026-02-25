@@ -125,6 +125,12 @@ class RunResult:
     ollama_model_stats: list[dict] = field(default_factory=list)
     ollama_swap_count: int = 0
 
+    # Per-phase metrics (handoff runs only — defaults maintain backward compat)
+    phase1_wall_clock_s: float = 0.0
+    phase2_wall_clock_s: float = 0.0
+    phase1_exit_code: int = -1
+    phase2_exit_code: int = -1
+
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict."""
         d = {
@@ -143,6 +149,10 @@ class RunResult:
             "model_name": self.model_name,
             "ollama_model_stats": self.ollama_model_stats,
             "ollama_swap_count": self.ollama_swap_count,
+            "phase1_wall_clock_s": self.phase1_wall_clock_s,
+            "phase2_wall_clock_s": self.phase2_wall_clock_s,
+            "phase1_exit_code": self.phase1_exit_code,
+            "phase2_exit_code": self.phase2_exit_code,
         }
         if self.test_result:
             d["test_result"] = {
@@ -183,6 +193,10 @@ class RunResult:
             model_name=d.get("model_name", ""),
             ollama_model_stats=d.get("ollama_model_stats", []),
             ollama_swap_count=d.get("ollama_swap_count", 0),
+            phase1_wall_clock_s=d.get("phase1_wall_clock_s", 0.0),
+            phase2_wall_clock_s=d.get("phase2_wall_clock_s", 0.0),
+            phase1_exit_code=d.get("phase1_exit_code", -1),
+            phase2_exit_code=d.get("phase2_exit_code", -1),
         )
 
     def save(self, result_dir: Path) -> None:
