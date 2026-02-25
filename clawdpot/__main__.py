@@ -18,8 +18,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from clawdpot.models import Mode
-from clawdpot.runner import run_all_modes, run_scenario
+from clawdpot.models import Mode, ScoreCard
+from clawdpot.runner import run_all_modes, run_scenario, run_handoff
 from clawdpot.scenarios import list_scenarios
 from clawdpot.scorer import generate_report, list_all_results, load_scorecard, render_scorecard, save_note
 
@@ -84,6 +84,42 @@ def cmd_run(
     else:
         console.print("[red]Specify --mode or --all[/red]")
         raise typer.Exit(1)
+
+
+@app.command("handoff")
+def cmd_handoff(
+    scenario: str = typer.Argument(help="Scenario name (e.g., 'api_server_handoff')"),
+    phase1_mode: str = typer.Option(..., "--phase1-mode", help="First phase mode: native, hybrid, offline, offline-cpu, gsd"),
+    phase2_mode: str = typer.Option(..., "--phase2-mode", help="Second phase mode: native, hybrid, offline, offline-cpu, gsd"),
+    model: Optional[str] = typer.Option(None, "--model", help="Override model for both phases"),
+    phase1_model: Optional[str] = typer.Option(None, "--phase1-model", help="Override model for first phase"),
+    phase2_model: Optional[str] = typer.Option(None, "--phase2-model", help="Override model for second phase"),
+    num_ctx: int = typer.Option(65536, "--num-ctx", help="Context window for offline mode"),
+) -> None:
+    """Run a scenario with two phases (handoff)."""
+    try:
+        m1 = Mode(phase1_mode)
+        m2 = Mode(phase2_mode)
+    except ValueError:
+        console.print(f"[red]Invalid mode. Choose: native, hybrid, offline, offline-cpu, gsd[/red]")
+        raise typer.Exit(1)
+
+    result = run_handoff(
+        scenario, m1, m2, console,
+        model=model,
+        phase1_model=phase1_model,
+        phase2_model=phase2_model,
+        num_ctx=num_ctx,
+    )
+
+    # Show scorecard for the handoff run
+    if result:
+        console.print("\n[bold]--- Handoff Scorecard ---[/bold]")
+        card = load_scorecard(scenario)
+        # Filter the card to show only this specific run
+        filtered_card = ScoreCard(scenario=scenario)
+        filtered_card.results = {result.mode: result}
+        render_scorecard(filtered_card, console)
 
 
 @app.command("score")

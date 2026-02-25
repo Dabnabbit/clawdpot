@@ -587,6 +587,257 @@ def run_scenario(
     return result
 
 
+def run_handoff(
+    scenario_name: str,
+    phase1_mode: Mode,
+    phase2_mode: Mode,
+    console: Console,
+    model: Optional[str] = None,
+    phase1_model: Optional[str] = None,
+    phase2_model: Optional[str] = None,
+    num_ctx: int = 65536,
+) -> RunResult:
+    """Execute a two-phase handoff scenario.
+
+    This function runs a scenario in two phases:
+    1. Phase 1: Run with phase1_mode and phase1_model
+    2. Phase 2: Run with phase2_mode and phase2_model using the same workdir
+
+    Args:
+        scenario_name: Name of the scenario (e.g., 'api_server_handoff').
+        phase1_mode: First phase mode (native, hybrid, offline, offline-cpu, gsd).
+        phase2_mode: Second phase mode (native, hybrid, offline, offline-cpu, gsd).
+        console: Rich Console for status output.
+        model: Ollama model override for both phases (when not specified per phase).
+        phase1_model: Ollama model override for first phase.
+        phase2_model: Ollama model override for second phase.
+        num_ctx: Context window size for offline mode.
+
+    Returns:
+        RunResult with all metrics populated, including per-phase wall clock times.
+    """
+    # Load scenario metadata using importlib (no spec.md - use phase1_spec.md + phase2_spec.md)
+    import importlib
+    try:
+        scenario_mod = importlib.import_module(f"clawdpot.scenarios.{scenario_name}")
+    except ImportError:
+        console.print(f"[red]Error:[/red] Unknown scenario: {scenario_name}")
+        return RunResult(scenario=scenario_name, mode="handoff", timestamp="")
+
+    # Create workdir and result_dir with mode_slug = "handoff-{p1slug}-{p2slug}"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    p1slug = phase1_mode.value
+    p2slug = phase2_mode.value
+    if phase1_model and phase1_mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
+        p1slug = f"{phase1_mode.value}-{_model_slug(phase1_model)}"
+    if phase2_model and phase2_mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
+        p2slug = f"{phase2_mode.value}-{_model_slug(phase2_model)}"
+    mode_slug = f"handoff-{p1slug}-{p2slug}"
+
+    console.print(f"\n[bold]Running handoff:[/bold] {scenario_name} / {mode_slug}")
+
+    result_dir, workdir = _ensure_workdir(scenario_name, mode_slug, timestamp)
+    console.print(f"  Result dir: {result_dir}")
+
+    # Copy seed files
+    scenario = load_scenario(scenario_name)
+    if scenario and scenario.seed_dir:
+        _copy_seed(scenario.seed_dir, workdir)
+
+    # Restart Ollama debug log if either phase uses offline/gsd
+    ollama_proc = None
+    ollama_log_path = result_dir / "ollama-debug.log"
+    if phase1_mode in _OLLAMA_MODES or phase2_mode in _OLLAMA_MODES:
+        ollama_proc = _restart_ollama_debug(ollama_log_path, console)
+
+    # Phase 1: build env for phase1_mode, warm ollama if needed, run _run_claude
+    console.print(f"  Phase 1: {phase1_mode.value}")
+
+    # Determine model for phase 1
+    phase1_ollama_model = phase1_model or model or os.environ.get("HC_MODEL", "gpt-oss:20b")
+    if phase1_mode == Mode.OFFLINE_CPU:
+        phase1_ollama_model = phase1_model or model or os.environ.get("HC_MODEL", "qwen3:4b")
+    elif phase1_mode == Mode.GSD:
+        phase1_ollama_model = phase1_model or model or os.environ.get("HC_MODEL", "qwen3-coder")
+
+    # Build env for phase 1
+    if phase1_mode == Mode.NATIVE:
+        env1 = build_native_env()
+        console.print("  Mode: [green]native[/green] (vanilla Anthropic API)")
+    elif phase1_mode == Mode.HYBRID:
+        env1 = build_native_env()
+        console.print("  Mode: [cyan]hybrid[/cyan] (direct Anthropic cloud)")
+    elif phase1_mode == Mode.OFFLINE:
+        env1 = build_offline_env(model=phase1_model or model, num_ctx=num_ctx)
+        console.print(f"  Mode: [yellow]offline[/yellow] (local Ollama only)")
+    elif phase1_mode == Mode.OFFLINE_CPU:
+        env1 = build_offline_cpu_env(model=phase1_model or model, num_ctx=num_ctx)
+        console.print(f"  Mode: [magenta]offline-cpu[/magenta] (CPU-only Ollama)")
+    elif phase1_mode == Mode.GSD:
+        env1 = build_gsd_env(
+            orchestrator_model=phase1_model or model,
+            subagent_model=os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b"),
+            num_ctx=num_ctx,
+        )
+        orch_name = phase1_model or model or os.environ.get("HC_MODEL", "qwen3-coder")
+        sub_name = os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+        console.print(f"  Mode: [blue]gsd[/blue] (orchestrator={orch_name}, subagent={sub_name})")
+    else:
+        env1 = build_native_env()
+
+    # Warm up Ollama for phase 1 if needed
+    if phase1_mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
+        _warm_ollama(phase1_ollama_model, console)
+    elif phase1_mode == Mode.GSD:
+        orch_name = phase1_model or model or os.environ.get("HC_MODEL", "qwen3-coder")
+        sub_name = os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+        _warm_ollama(orch_name, console)
+        if sub_name != orch_name:
+            _warm_ollama(sub_name, console)
+
+    # Read the phase 1 spec
+    phase1_spec_path = scenario.path / "phase1_spec.md"
+    if not phase1_spec_path.exists():
+        console.print(f"[red]Error:[/red] Missing phase1_spec.md for scenario: {scenario_name}")
+        return RunResult(scenario=scenario_name, mode=mode_slug, timestamp="")
+    phase1_spec = phase1_spec_path.read_text(encoding="utf-8")
+
+    # Run phase 1
+    console.print("  Running phase 1 claude -p .")
+    phase1_exit_code, phase1_wall_clock, phase1_stdout, phase1_stderr = _run_claude(
+        phase1_spec, workdir, env1, scenario.timeout_s, phase1_mode, result_dir,
+    )
+
+    # Save raw output
+    (result_dir / "phase1-stdout.txt").write_text(phase1_stdout, encoding="utf-8")
+    (result_dir / "phase1-stderr.txt").write_text(phase1_stderr, encoding="utf-8")
+
+    if phase1_exit_code == -1:
+        console.print(f"  [red]PHASE 1 TIMEOUT[/red] after {scenario.timeout_s}s")
+    else:
+        console.print(f"  Phase 1 exit code: {phase1_exit_code} ({phase1_wall_clock:.1f}s)")
+
+    # Phase 2: build env for phase2_mode, warm ollama if needed, run _run_claude with SAME workdir
+    console.print(f"  Phase 2: {phase2_mode.value}")
+
+    # Determine model for phase 2
+    phase2_ollama_model = phase2_model or model or os.environ.get("HC_MODEL", "gpt-oss:20b")
+    if phase2_mode == Mode.OFFLINE_CPU:
+        phase2_ollama_model = phase2_model or model or os.environ.get("HC_MODEL", "qwen3:4b")
+    elif phase2_mode == Mode.GSD:
+        phase2_ollama_model = phase2_model or model or os.environ.get("HC_MODEL", "qwen3-coder")
+
+    # Build env for phase 2
+    if phase2_mode == Mode.NATIVE:
+        env2 = build_native_env()
+        console.print("  Mode: [green]native[/green] (vanilla Anthropic API)")
+    elif phase2_mode == Mode.HYBRID:
+        env2 = build_native_env()
+        console.print("  Mode: [cyan]hybrid[/cyan] (direct Anthropic cloud)")
+    elif phase2_mode == Mode.OFFLINE:
+        env2 = build_offline_env(model=phase2_model or model, num_ctx=num_ctx)
+        console.print(f"  Mode: [yellow]offline[/yellow] (local Ollama only)")
+    elif phase2_mode == Mode.OFFLINE_CPU:
+        env2 = build_offline_cpu_env(model=phase2_model or model, num_ctx=num_ctx)
+        console.print(f"  Mode: [magenta]offline-cpu[/magenta] (CPU-only Ollama)")
+    elif phase2_mode == Mode.GSD:
+        env2 = build_gsd_env(
+            orchestrator_model=phase2_model or model,
+            subagent_model=os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b"),
+            num_ctx=num_ctx,
+        )
+        orch_name = phase2_model or model or os.environ.get("HC_MODEL", "qwen3-coder")
+        sub_name = os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+        console.print(f"  Mode: [blue]gsd[/blue] (orchestrator={orch_name}, subagent={sub_name})")
+    else:
+        env2 = build_native_env()
+
+    # Warm up Ollama for phase 2 if needed
+    if phase2_mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
+        _warm_ollama(phase2_ollama_model, console)
+    elif phase2_mode == Mode.GSD:
+        orch_name = phase2_model or model or os.environ.get("HC_MODEL", "qwen3-coder")
+        sub_name = os.environ.get("HC_MODEL_BACKGROUND", "qwen3:4b")
+        _warm_ollama(orch_name, console)
+        if sub_name != orch_name:
+            _warm_ollama(sub_name, console)
+
+    # Read the phase 2 spec
+    phase2_spec_path = scenario.path / "phase2_spec.md"
+    if not phase2_spec_path.exists():
+        console.print(f"[red]Error:[/red] Missing phase2_spec.md for scenario: {scenario_name}")
+        return RunResult(scenario=scenario_name, mode=mode_slug, timestamp="")
+    phase2_spec = phase2_spec_path.read_text(encoding="utf-8")
+
+    # Run phase 2
+    console.print("  Running phase 2 claude -p .")
+    phase2_exit_code, phase2_wall_clock, phase2_stdout, phase2_stderr = _run_claude(
+        phase2_spec, workdir, env2, scenario.timeout_s, phase2_mode, result_dir,
+    )
+
+    # Save raw output
+    (result_dir / "phase2-stdout.txt").write_text(phase2_stdout, encoding="utf-8")
+    (result_dir / "phase2-stderr.txt").write_text(phase2_stderr, encoding="utf-8")
+
+    if phase2_exit_code == -1:
+        console.print(f"  [red]PHASE 2 TIMEOUT[/red] after {scenario.timeout_s}s")
+    else:
+        console.print(f"  Phase 2 exit code: {phase2_exit_code} ({phase2_wall_clock:.1f}s)")
+
+    # Run judge tests on final state
+    console.print("  Running judge tests...")
+    test_result = _run_judge(workdir, scenario.tests_dir, result_dir)
+    console.print(
+        f"  Judge: {test_result.passed}/{test_result.total} passed "
+        f"([{'green' if test_result.verdict == 'pass' else 'yellow' if test_result.verdict == 'partial' else 'red'}]"
+        f"{test_result.verdict}[/])"
+    )
+
+    # Parse Ollama debug log and stop the process we started
+    ollama_stats_dicts: list[dict] = []
+    ollama_swaps = 0
+    if phase1_mode in _OLLAMA_MODES or phase2_mode in _OLLAMA_MODES:
+        parsed_stats, ollama_swaps = parse_ollama_log(ollama_log_path)
+        ollama_stats_dicts = [s.to_dict() for s in parsed_stats]
+        if parsed_stats:
+            parts = [f"{s.model.split('/')[-1]}:{s.requests}req/{s.prompt_tokens}tok" for s in parsed_stats]
+            console.print(f"  Ollama stats: {', '.join(parts)} | swaps: {ollama_swaps}")
+        _stop_ollama(ollama_proc)
+
+    # Compute total tokens and cost from the token delta
+    total_input, total_output, cost_usd = _compute_cost(ollama_stats_dicts)
+
+    # Assemble and save RunResult
+    result = RunResult(
+        scenario=scenario.name,
+        mode=mode_slug,
+        timestamp=timestamp,
+        model_name=phase1_ollama_model if phase1_mode in (Mode.OFFLINE, Mode.OFFLINE_CPU) else (
+            f"{phase1_model or model or 'qwen3-coder'}+{os.environ.get('HC_MODEL_BACKGROUND', 'qwen3:4b')}" if phase1_mode == Mode.GSD else ""
+        ),
+        wall_clock_s=round(phase1_wall_clock + phase2_wall_clock, 1),
+        exit_code=phase2_exit_code,  # Use the exit code from the final phase
+        stdout_path=str(result_dir / "phase2-stdout.txt"),
+        stderr_path=str(result_dir / "phase2-stderr.txt"),
+        workdir=str(workdir),
+        token_delta=token_delta,
+        total_input_tokens=total_input,
+        total_output_tokens=total_output,
+        estimated_cost_usd=round(cost_usd, 4),
+        test_result=test_result,
+        ollama_model_stats=ollama_stats_dicts,
+        ollama_swap_count=ollama_swaps,
+        phase1_wall_clock_s=round(phase1_wall_clock, 1),
+        phase2_wall_clock_s=round(phase2_wall_clock, 1),
+        phase1_exit_code=phase1_exit_code,
+        phase2_exit_code=phase2_exit_code,
+    )
+    result.save(result_dir)
+
+    console.print(f"  [bold green]Done.[/bold green] Metrics saved to {result_dir / 'metrics.json'}")
+    return result
+
+
 def run_all_modes(
     scenario_name: str,
     console: Console,

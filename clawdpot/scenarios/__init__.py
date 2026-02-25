@@ -72,7 +72,8 @@ def load_scenario(name: str) -> Optional[ScenarioInfo]:
     spec_path = scenario_dir / "spec.md"
     tests_dir = scenario_dir / "tests"
 
-    if not scenario_dir.is_dir() or not spec_path.exists():
+    # Handoff scenarios don't have spec.md, but they have phase1_spec.md and phase2_spec.md
+    if not scenario_dir.is_dir() or not (spec_path.exists() or (scenario_dir / "phase1_spec.md").exists()):
         return None
 
     # Import the scenario's __init__.py to get metadata

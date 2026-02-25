@@ -159,6 +159,14 @@ def render_scorecard(card: ScoreCard, console: Console) -> None:
     # Wall clock
     _row("Wall clock", lambda r, m: f"{r.wall_clock_s}s" if r.wall_clock_s else "--")
 
+    # Phase 1 clock (if available)
+    if any(r.phase1_wall_clock_s > 0 for r in card.results.values()):
+        _row("Phase 1 clock", lambda r, m: f"{r.phase1_wall_clock_s}s" if r.phase1_wall_clock_s > 0 else "--")
+
+    # Phase 2 clock (if available)
+    if any(r.phase2_wall_clock_s > 0 for r in card.results.values()):
+        _row("Phase 2 clock", lambda r, m: f"{r.phase2_wall_clock_s}s" if r.phase2_wall_clock_s > 0 else "--")
+
     # Input tokens
     _row("Input tokens", lambda r, m: _fmt_tokens(r.total_input_tokens))
 
