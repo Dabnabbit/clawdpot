@@ -168,6 +168,32 @@ def render_scorecard(card: ScoreCard, console: Console) -> None:
     # Estimated cost
     _row("Est. cost", lambda r, m: _fmt_cost(r.estimated_cost_usd))
 
+    # Ollama model calls (compact: "coder:14 4b:7")
+    if any(r.ollama_model_stats for r in card.results.values()):
+        def model_calls(r: RunResult, m: str) -> str:
+            if not r.ollama_model_stats:
+                return "[dim]--[/dim]"
+            parts = []
+            for s in r.ollama_model_stats:
+                # Shorten model name: "qwen3-coder:latest" → "coder", "qwen3:4b" → "4b"
+                name = s.get("model", "?")
+                short = name.split(":")[-1] if ":" in name else name
+                if short == "latest":
+                    short = name.split(":")[0].split("-")[-1]
+                parts.append(f"{short}:{s.get('requests', 0)}")
+            return " ".join(parts)
+        _row("Model calls", model_calls)
+
+    # Ollama model swaps
+    if any(r.ollama_swap_count for r in card.results.values()):
+        def swaps(r: RunResult, m: str) -> str:
+            if not r.ollama_model_stats:
+                return "[dim]--[/dim]"
+            n = r.ollama_swap_count
+            color = "green" if n == 0 else "yellow"
+            return f"[{color}]{n}[/{color}]"
+        _row("Model swaps", swaps)
+
     # Exit code
     def exitcode(r: RunResult, m: str) -> str:
         if r.exit_code == 0:
@@ -311,8 +337,8 @@ def generate_report() -> Path:
             continue
 
         # Table header
-        lines.append("| # | Timestamp | Mode | Verdict | Tests | Wall Clock | Input Tok | Output Tok | Cost | Exit | Notes |")
-        lines.append("|---|-----------|------|---------|-------|------------|-----------|------------|------|------|-------|")
+        lines.append("| # | Timestamp | Mode | Verdict | Tests | Wall Clock | Input Tok | Output Tok | Cost | Model Calls | Swaps | Exit | Notes |")
+        lines.append("|---|-----------|------|---------|-------|------------|-----------|------------|------|-------------|-------|------|-------|")
 
         for i, r in enumerate(runs, 1):
             tr = r.test_result
@@ -324,9 +350,19 @@ def generate_report() -> Path:
             exitcode = str(r.exit_code) if r.exit_code != -1 else "timeout"
             note = notes.get(r.timestamp, "")
 
+            # Ollama model calls compact format
+            if r.ollama_model_stats:
+                mcalls = " ".join(
+                    f"{s.get('model', '?').split(':')[-1] if ':' in s.get('model', '') and s.get('model', '').split(':')[-1] != 'latest' else s.get('model', '?').split(':')[0].split('-')[-1]}:{s.get('requests', 0)}"
+                    for s in r.ollama_model_stats
+                )
+            else:
+                mcalls = "--"
+            mswaps = str(r.ollama_swap_count) if r.ollama_model_stats else "--"
+
             lines.append(
                 f"| {i} | `{r.timestamp}` | {r.mode} | **{verdict}** | {tests} "
-                f"| {r.wall_clock_s}s | {inp} | {out} | {cost} | {exitcode} | {note} |"
+                f"| {r.wall_clock_s}s | {inp} | {out} | {cost} | {mcalls} | {mswaps} | {exitcode} | {note} |"
             )
 
         lines.append("")
@@ -354,6 +390,21 @@ def generate_report() -> Path:
         lines.append(_metric_row("Tests", lambda r: f"{r.test_result.passed}/{r.test_result.total}" if r.test_result else "--"))
         lines.append(_metric_row("Wall clock", lambda r: f"{r.wall_clock_s}s"))
         lines.append(_metric_row("Cost", lambda r: _fmt_cost(r.estimated_cost_usd)))
+
+        def _fmt_model_calls(r: RunResult) -> str:
+            if not r.ollama_model_stats:
+                return "--"
+            parts = []
+            for s in r.ollama_model_stats:
+                name = s.get("model", "?")
+                short = name.split(":")[-1] if ":" in name else name
+                if short == "latest":
+                    short = name.split(":")[0].split("-")[-1]
+                parts.append(f"{short}:{s.get('requests', 0)}")
+            return " ".join(parts)
+
+        lines.append(_metric_row("Model calls", _fmt_model_calls))
+        lines.append(_metric_row("Model swaps", lambda r: str(r.ollama_swap_count) if r.ollama_model_stats else "--"))
         lines.append("")
 
     out = _report_path()

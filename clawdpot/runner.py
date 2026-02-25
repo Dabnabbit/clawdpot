@@ -30,6 +30,7 @@ from rich.console import Console
 
 from clawdpot.environment import build_gsd_env, build_native_env, build_offline_cpu_env, build_offline_env
 from clawdpot.models import Mode, RunResult, StatsSnapshot, TestResult
+from clawdpot.ollama_log import parse_ollama_log
 from clawdpot.pricing import classify_model, estimate_cost
 from clawdpot.scenarios import load_scenario
 
@@ -66,6 +67,72 @@ def _warm_ollama(model: str, console: Console) -> None:
         console.print(f"  [dim]Ollama warm: {model} loaded in VRAM[/dim]")
     except (urllib.error.URLError, OSError, TimeoutError) as e:
         console.print(f"  [yellow]Ollama warm-up failed: {e}[/yellow]")
+
+
+def _restart_ollama_debug(log_path: Path, console: Console) -> subprocess.Popen | None:
+    """Kill existing Ollama, restart with OLLAMA_DEBUG=1 logging to log_path.
+
+    Returns the Popen handle (caller must stop it later), or None on failure.
+    """
+    # Kill any existing Ollama process
+    subprocess.run(["pkill", "-f", "ollama serve"], capture_output=True, timeout=5)
+    # Wait for port to free
+    for _ in range(20):
+        try:
+            import urllib.request
+            urllib.request.urlopen("http://127.0.0.1:11434/api/version", timeout=1)
+            time.sleep(0.5)
+        except (OSError, Exception):
+            break
+    else:
+        console.print("  [yellow]Warning: Ollama port still occupied after kill[/yellow]")
+
+    # Start with debug logging
+    env = os.environ.copy()
+    env["OLLAMA_DEBUG"] = "1"
+    log_file = open(log_path, "w", encoding="utf-8", errors="replace")
+    try:
+        proc = subprocess.Popen(
+            ["ollama", "serve"],
+            env=env,
+            stdout=log_file,
+            stderr=log_file,
+        )
+    except FileNotFoundError:
+        console.print("  [red]ollama binary not found — skipping debug logging[/red]")
+        log_file.close()
+        return None
+
+    # Wait for ready (up to 15s)
+    import urllib.request
+    import urllib.error
+    for i in range(30):
+        time.sleep(0.5)
+        try:
+            urllib.request.urlopen("http://127.0.0.1:11434/api/version", timeout=2)
+            console.print(f"  [dim]Ollama restarted with debug logging ({(i+1)*0.5:.1f}s)[/dim]")
+            return proc
+        except (urllib.error.URLError, OSError):
+            continue
+
+    console.print("  [yellow]Warning: Ollama did not become ready after restart[/yellow]")
+    return proc
+
+
+def _stop_ollama(proc: subprocess.Popen | None) -> None:
+    """Gracefully stop an Ollama process we started."""
+    if proc is None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+# Modes that use Ollama and should get debug logging
+_OLLAMA_MODES = {Mode.OFFLINE, Mode.OFFLINE_CPU, Mode.GSD}
 
 
 def _run_gpu_preflight(model: str, num_ctx: int, console: Console) -> bool:
@@ -432,7 +499,13 @@ def run_scenario(
     else:
         env = build_native_env()
 
-    # 4b. Warm up Ollama for offline/GSD modes — ensures model is loaded before
+    # 4b. Restart Ollama with debug logging for modes that use it
+    ollama_proc = None
+    ollama_log_path = result_dir / "ollama-debug.log"
+    if mode in _OLLAMA_MODES:
+        ollama_proc = _restart_ollama_debug(ollama_log_path, console)
+
+    # 4c. Warm up Ollama for offline/GSD modes — ensures model is loaded before
     # the clock starts so offline doesn't pay a cold-load penalty
     if mode in (Mode.OFFLINE, Mode.OFFLINE_CPU):
         _warm_ollama(ollama_model, console)
@@ -476,6 +549,17 @@ def run_scenario(
         f"{test_result.verdict}[/])"
     )
 
+    # 8b. Parse Ollama debug log and stop the process we started
+    ollama_stats_dicts: list[dict] = []
+    ollama_swaps = 0
+    if mode in _OLLAMA_MODES:
+        parsed_stats, ollama_swaps = parse_ollama_log(ollama_log_path)
+        ollama_stats_dicts = [s.to_dict() for s in parsed_stats]
+        if parsed_stats:
+            parts = [f"{s.model.split('/')[-1]}:{s.requests}req/{s.prompt_tokens}tok" for s in parsed_stats]
+            console.print(f"  Ollama stats: {', '.join(parts)} | swaps: {ollama_swaps}")
+        _stop_ollama(ollama_proc)
+
     # 9. Assemble and save RunResult
     result = RunResult(
         scenario=scenario.name,
@@ -494,6 +578,8 @@ def run_scenario(
         total_output_tokens=total_output,
         estimated_cost_usd=round(cost_usd, 4),
         test_result=test_result,
+        ollama_model_stats=ollama_stats_dicts,
+        ollama_swap_count=ollama_swaps,
     )
     result.save(result_dir)
 

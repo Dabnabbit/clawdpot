@@ -121,6 +121,10 @@ class RunResult:
     # Model identification (for per-model baselining)
     model_name: str = ""
 
+    # Ollama debug log stats (per-model request counts + prompt tokens)
+    ollama_model_stats: list[dict] = field(default_factory=list)
+    ollama_swap_count: int = 0
+
     def to_dict(self) -> dict:
         """Serialize to a JSON-compatible dict."""
         d = {
@@ -137,6 +141,8 @@ class RunResult:
             "total_output_tokens": self.total_output_tokens,
             "estimated_cost_usd": self.estimated_cost_usd,
             "model_name": self.model_name,
+            "ollama_model_stats": self.ollama_model_stats,
+            "ollama_swap_count": self.ollama_swap_count,
         }
         if self.test_result:
             d["test_result"] = {
@@ -175,6 +181,8 @@ class RunResult:
             estimated_cost_usd=d.get("estimated_cost_usd", 0.0),
             test_result=tr,
             model_name=d.get("model_name", ""),
+            ollama_model_stats=d.get("ollama_model_stats", []),
+            ollama_swap_count=d.get("ollama_swap_count", 0),
         )
 
     def save(self, result_dir: Path) -> None:
