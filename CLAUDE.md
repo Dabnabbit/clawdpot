@@ -13,8 +13,8 @@ Extracted from the Hermit-Claude project where it was the "bakeoff" subsystem.
 ```
 clawdpot/
 ├── __init__.py        # Package docstring
-├── __main__.py        # Typer CLI (list, run, score, results, report, note)
-├── runner.py          # Orchestrates: setup → claude -p → judge → metrics
+├── __main__.py        # Typer CLI (list, run, handoff, score, results, report, note)
+├── runner.py          # Orchestrates: setup → claude -p → judge → metrics (+ run_handoff for two-phase)
 ├── models.py          # Mode, RunResult, StatsSnapshot, TestResult, ScoreCard
 ├── scorer.py          # Rich comparison tables, markdown report generation
 ├── environment.py     # Per-mode env dict builders (native, offline, offline-cpu)
@@ -22,10 +22,12 @@ clawdpot/
 ├── notes.md           # Historical run annotations
 └── scenarios/
     ├── __init__.py    # Scenario discovery and loading
-    ├── calculator/    # Expression parser (15 tests)
-    ├── debug_hunt/    # Fix 5 seeded bugs (10 tests)
-    ├── api_server/    # Flask REST API (20 tests)
-    └── refactor/      # Restructure monolithic code (20 tests)
+    ├── calculator/           # Expression parser (15 tests)
+    ├── debug_hunt/           # Fix 5 seeded bugs (10 tests)
+    ├── api_server/           # Flask REST API (20 tests)
+    ├── api_server_handoff/   # Two-phase Flask API: CRUD then validation (20 tests)
+    ├── gsd_calculator/       # Calculator with .planning/ seed for GSD mode (15 tests)
+    └── refactor/             # Restructure monolithic code (20 tests)
 ```
 
 ## Tech Stack

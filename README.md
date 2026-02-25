@@ -34,6 +34,9 @@ clawdpot run calculator --mode offline --model qwen3-coder
 # Run all three modes (native, hybrid, offline)
 clawdpot run calculator --all
 
+# Run a two-phase handoff scenario
+clawdpot handoff api_server_handoff --phase1-mode native --phase2-mode offline
+
 # Compare latest results
 clawdpot score calculator
 
@@ -58,6 +61,8 @@ python -m clawdpot run calculator --mode native
 | calculator | Expression parser (no eval) | 15 |
 | debug_hunt | Find and fix 5 seeded bugs | 10 |
 | api_server | Flask REST API to spec | 20 |
+| api_server_handoff | Two-phase: CRUD then validation | 20 |
+| gsd_calculator | Calculator with GSD scaffold | 15 |
 | refactor | Restructure monolithic code | 20 |
 
 ## Modes

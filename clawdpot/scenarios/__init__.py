@@ -48,7 +48,7 @@ def list_scenarios() -> list[ScenarioInfo]:
             continue
         init = child / "__init__.py"
         spec = child / "spec.md"
-        if not init.exists() or not spec.exists():
+        if not init.exists() or not (spec.exists() or (child / "phase1_spec.md").exists()):
             continue
 
         info = load_scenario(child.name)

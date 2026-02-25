@@ -616,14 +616,6 @@ def run_handoff(
     Returns:
         RunResult with all metrics populated, including per-phase wall clock times.
     """
-    # Load scenario metadata using importlib (no spec.md - use phase1_spec.md + phase2_spec.md)
-    import importlib
-    try:
-        scenario_mod = importlib.import_module(f"clawdpot.scenarios.{scenario_name}")
-    except ImportError:
-        console.print(f"[red]Error:[/red] Unknown scenario: {scenario_name}")
-        return RunResult(scenario=scenario_name, mode="handoff", timestamp="")
-
     # Create workdir and result_dir with mode_slug = "handoff-{p1slug}-{p2slug}"
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     p1slug = phase1_mode.value
@@ -639,9 +631,14 @@ def run_handoff(
     result_dir, workdir = _ensure_workdir(scenario_name, mode_slug, timestamp)
     console.print(f"  Result dir: {result_dir}")
 
-    # Copy seed files
+    # Load scenario metadata
     scenario = load_scenario(scenario_name)
-    if scenario and scenario.seed_dir:
+    if not scenario:
+        console.print(f"[red]Error:[/red] Unknown scenario: {scenario_name}")
+        return RunResult(scenario=scenario_name, mode=mode_slug, timestamp="")
+
+    # Copy seed files
+    if scenario.seed_dir:
         _copy_seed(scenario.seed_dir, workdir)
 
     # Restart Ollama debug log if either phase uses offline/gsd
@@ -649,6 +646,9 @@ def run_handoff(
     ollama_log_path = result_dir / "ollama-debug.log"
     if phase1_mode in _OLLAMA_MODES or phase2_mode in _OLLAMA_MODES:
         ollama_proc = _restart_ollama_debug(ollama_log_path, console)
+
+    # Snapshot stats-cache (before)
+    stats_before = StatsSnapshot.capture()
 
     # Phase 1: build env for phase1_mode, warm ollama if needed, run _run_claude
     console.print(f"  Phase 1: {phase1_mode.value}")
@@ -793,6 +793,10 @@ def run_handoff(
         f"{test_result.verdict}[/])"
     )
 
+    # Snapshot stats-cache (after) and compute delta
+    stats_after = StatsSnapshot.capture()
+    token_delta = StatsSnapshot.token_delta(stats_before, stats_after)
+
     # Parse Ollama debug log and stop the process we started
     ollama_stats_dicts: list[dict] = []
     ollama_swaps = 0
@@ -805,7 +809,7 @@ def run_handoff(
         _stop_ollama(ollama_proc)
 
     # Compute total tokens and cost from the token delta
-    total_input, total_output, cost_usd = _compute_cost(ollama_stats_dicts)
+    total_input, total_output, cost_usd = _compute_cost(token_delta)
 
     # Assemble and save RunResult
     result = RunResult(
